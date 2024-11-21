@@ -52,8 +52,7 @@ pipeline {
                     -Dsonar.projectKey=Blogging-app \
                     -Dsonar.sources=src/main/java \
                     -Dsonar.java.binaries=target/classes \
-                    -Dsonar.proxy.user=$PROXY_USER \
-                    -Dsonar.proxy.password=$PROXY_PASS
+                    -Dsonar.login=$SONAR_TOKEN
                     '''
                 }
             }
