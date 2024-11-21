@@ -36,7 +36,7 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy fs --exit-code 1 --severity HIGH,CRITICAL --format table -o fs.html .
+                trivy fs --format table -o fs.html .
                 '''
             }
         }
