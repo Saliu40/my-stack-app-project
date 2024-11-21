@@ -50,8 +50,8 @@ pipeline {
                     -Dsonar.sources=src/main/java \
                     -Dsonar.java.binaries=target/classes \
                     -Dsonar.language=java
-                    -Dsonar.proxy.user=admin
-                    -Dsonar.proxy.password=sonar-token
+                    -Dsonar.proxy.user=$PROXY_USER \
+                    -Dsonar.proxy.password=$PROXY_PASS
                     '''
                 }
             }
