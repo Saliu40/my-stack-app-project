@@ -50,6 +50,7 @@ pipeline {
                     -Dsonar.sources=src/main/java \
                     -Dsonar.java.binaries=target/classes \
                     -Dsonar.language=java
+                    -Dsonar.proxy.password=sonar-cred
                     '''
                 }
             }
