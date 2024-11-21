@@ -2,13 +2,15 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'  // Ensure this matches the exact JDK name in Global Tool Configuration
+        jdk 'jdk17'
         maven 'maven3'
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-        TRIVY_TIMEOUT = '10m' // Increased timeout for Trivy operations
+        TRIVY_TIMEOUT = '10m'
+        PROXY_USER = credentials('proxy-username-id')
+        PROXY_PASS = credentials('proxy-password-id')
     }
 
     stages {
@@ -28,6 +30,7 @@ pipeline {
         stage('Test') {
             steps {
                 sh 'mvn test'
+                junit '**/target/surefire-reports/*.xml'
             }
         }
 
@@ -35,7 +38,7 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy fs --format table -o fs.html .
+                trivy fs --exit-code 1 --severity HIGH,CRITICAL --format table -o fs.html .
                 '''
             }
         }
@@ -49,10 +52,20 @@ pipeline {
                     -Dsonar.projectKey=Blogging-app \
                     -Dsonar.sources=src/main/java \
                     -Dsonar.java.binaries=target/classes \
-                    -Dsonar.language=java
                     -Dsonar.proxy.user=$PROXY_USER \
                     -Dsonar.proxy.password=$PROXY_PASS
                     '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    def qg = waitForQualityGate()
+                    if (qg.status != 'OK') {
+                        error "Pipeline failed due to SonarQube quality gate failure: ${qg.status}"
+                    }
                 }
             }
         }
@@ -76,7 +89,7 @@ pipeline {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
                         sh '''
-                        docker build -t saliu21/bloggingapp:latest . --no-cache
+                        DOCKER_BUILDKIT=1 docker buildx build --platform linux/amd64,linux/arm64 -t saliu21/bloggingapp:latest .
                         '''
                     }
                 }
@@ -87,7 +100,7 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy image --format table -o image.html saliu21/bloggingapp:latest
+                trivy image --exit-code 1 --severity HIGH,CRITICAL --format table -o image.html saliu21/bloggingapp:latest
                 '''
             }
         }
@@ -96,9 +109,7 @@ pipeline {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        sh '''
-                        docker push saliu21/bloggingapp:latest
-                        '''
+                        sh 'docker push saliu21/bloggingapp:latest'
                     }
                 }
             }
@@ -110,6 +121,7 @@ pipeline {
                     withKubeConfig(kubeconfig: '/home/vagrant/jenkins-kube/config') {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
+                        kubectl rollout status deployment/<deployment-name>
                         sleep 20
                         '''
                     }
