@@ -2,13 +2,13 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'  // Ensure this matches the exact JDK name in Global Tool Configuration
+        jdk 'jdk17'  // Matches the configured JDK in Jenkins Global Tool Configuration
         maven 'maven3'
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-        TRIVY_TIMEOUT = '10m' // Increased timeout for Trivy operations
+        TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
     }
 
     stages {
@@ -28,6 +28,7 @@ pipeline {
         stage('Test') {
             steps {
                 sh 'mvn test'
+                junit '**/target/surefire-reports/*.xml'  // Capture test results for reporting
             }
         }
 
@@ -35,7 +36,7 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy fs --format table -o fs.html .
+                trivy fs --exit-code 1 --severity HIGH,CRITICAL --format table -o fs.html .
                 '''
             }
         }
@@ -43,15 +44,16 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar-server') {
-                    sh '''
-                    $SCANNER_HOME/bin/sonar-scanner \
-                    -Dsonar.projectName=Blogging-app \
-                    -Dsonar.projectKey=Blogging-app \
-                    -Dsonar.sources=src/main/java \
-                    -Dsonar.java.binaries=target/classes \
-                    -Dsonar.language=java
-                    -Dsonar.login=$SONAR_TOKEN
-                    '''
+                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                        sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=Blogging-app \
+                        -Dsonar.projectKey=Blogging-app \
+                        -Dsonar.sources=src/main/java \
+                        -Dsonar.java.binaries=target/classes \
+                        -Dsonar.login=$SONAR_TOKEN
+                        '''
+                    }
                 }
             }
         }
@@ -64,7 +66,7 @@ pipeline {
 
         stage('Publish Artifacts') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                withMaven(globalMavenSettingsConfig: 'nexus-creds', jdk: 'jdk17', maven: 'maven3', traceability: true) {
                     sh 'mvn deploy'
                 }
             }
@@ -86,7 +88,7 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy image --format table -o image.html saliu21/bloggingapp:latest
+                trivy image --exit-code 1 --severity HIGH,CRITICAL --format table -o image.html saliu21/bloggingapp:latest
                 '''
             }
         }
@@ -109,6 +111,7 @@ pipeline {
                     withKubeConfig(kubeconfig: '/home/vagrant/jenkins-kube/config') {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
+                        kubectl rollout status deployment/<deployment-name>
                         sleep 20
                         '''
                     }
