@@ -36,8 +36,9 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy fs --format table -o fs.html .
+                trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table -o fs.html .
                 '''
+                archiveArtifacts artifacts: 'fs.html', allowEmptyArchive: true // Save Trivy FS report
             }
         }
 
@@ -61,13 +62,14 @@ pipeline {
         stage('Build') {
             steps {
                 sh 'mvn clean package'
+                archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true // Save the JAR
             }
         }
 
         stage('Publish Artifacts') {
             steps {
                 withMaven(globalMavenSettingsConfig: 'nexus-creds', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                    sh 'mvn deploy'
+                    sh 'mvn deploy -Dmaven.repo.local=/var/lib/jenkins/.m2/repository'
                 }
             }
         }
@@ -90,6 +92,7 @@ pipeline {
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
                 trivy image --exit-code 1 --severity HIGH,CRITICAL --format table -o image.html saliu21/bloggingapp:latest
                 '''
+                archiveArtifacts artifacts: 'image.html', allowEmptyArchive: true // Save Trivy Image report
             }
         }
 
@@ -111,8 +114,7 @@ pipeline {
                     withKubeConfig(kubeconfig: '/home/vagrant/jenkins-kube/config') {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
-                        kubectl rollout status deployment/<deployment-name>
-                        sleep 20
+                        kubectl rollout status deployment/<deployment-name> --timeout=60s
                         '''
                     }
                 }
@@ -136,6 +138,7 @@ pipeline {
     post {
         always {
             echo 'Pipeline completed.'
+            cleanWs() // Clean up the workspace after the pipeline
         }
 
         failure {
