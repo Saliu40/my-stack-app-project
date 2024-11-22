@@ -68,7 +68,7 @@ pipeline {
 
         stage('Publish Artifacts') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'nexus-creds', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
                     sh 'mvn deploy -Dmaven.repo.local=/var/lib/jenkins/.m2/repository'
                 }
             }
