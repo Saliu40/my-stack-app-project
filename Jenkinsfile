@@ -70,7 +70,7 @@ pipeline {
 
         stage('Publish Artifacts to Repository') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'maven-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
                     sh 'mvn deploy'
                 }
             }
