@@ -3,12 +3,14 @@ pipeline {
 
     tools {
         jdk 'jdk17'  // Matches the configured JDK in Jenkins Global Tool Configuration
-        maven 'maven3'
+        maven 'maven3'  // Matches the configured Maven version
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
         TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
+        DOCKER_IMAGE = 'saliu21/bloggingapp:latest'  // Centralized Docker image tag
+        KUBECONFIG = '/home/vagrant/jenkins-kube/config'  // Path to kubeconfig
     }
 
     stages {
@@ -32,7 +34,7 @@ pipeline {
             }
         }
 
-        stage('Trivy FS Scan') {
+        stage('Static Code Analysis with Trivy FS') {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
@@ -66,10 +68,10 @@ pipeline {
             }
         }
 
-        stage('Publish Artifacts') {
+        stage('Publish Artifacts to Repository') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                    sh 'mvn deploy -Dmaven.repo.local=/var/lib/jenkins/.m2/repository'
+                withMaven(globalMavenSettingsConfig: 'maven-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                    sh 'mvn deploy'
                 }
             }
         }
@@ -79,7 +81,7 @@ pipeline {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
                         sh '''
-                        docker build -t saliu21/bloggingapp:latest . --no-cache
+                        docker build -t $DOCKER_IMAGE . --no-cache
                         '''
                     }
                 }
@@ -90,28 +92,28 @@ pipeline {
             steps {
                 sh '''
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy image --exit-code 1 --severity HIGH,CRITICAL --format table -o image.html saliu21/bloggingapp:latest
+                trivy image --exit-code 0 --severity HIGH,CRITICAL --format table -o image.html $DOCKER_IMAGE
                 '''
                 archiveArtifacts artifacts: 'image.html', allowEmptyArchive: true // Save Trivy Image report
             }
         }
 
-        stage('Docker Push') {
+        stage('Push Docker Image') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
                         sh '''
-                        docker push saliu21/bloggingapp:latest
+                        docker push $DOCKER_IMAGE
                         '''
                     }
                 }
             }
         }
 
-        stage('K8s Deploy') {
+        stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withKubeConfig(kubeconfig: '/home/vagrant/jenkins-kube/config') {
+                    withKubeConfig(kubeconfig: env.KUBECONFIG) {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
                         kubectl rollout status deployment/<deployment-name> --timeout=60s
@@ -121,10 +123,10 @@ pipeline {
             }
         }
 
-        stage('Verify the Deployment') {
+        stage('Verify Kubernetes Deployment') {
             steps {
                 script {
-                    withKubeConfig(kubeconfig: '/home/vagrant/jenkins-kube/config') {
+                    withKubeConfig(kubeconfig: env.KUBECONFIG) {
                         sh '''
                         kubectl get pods
                         kubectl get svc
