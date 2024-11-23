@@ -113,7 +113,7 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withKubeConfig(kubeconfig: env.KUBECONFIG) {
+                    withKubeConfig([credentialsId: 'k8-cred']) {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
                         kubectl rollout status deployment/<deployment-name> --timeout=60s
@@ -126,7 +126,7 @@ pipeline {
         stage('Verify Kubernetes Deployment') {
             steps {
                 script {
-                    withKubeConfig(kubeconfig: env.KUBECONFIG) {
+                    withKubeConfig([credentialsId: 'k8-cred']) {
                         sh '''
                         kubectl get pods
                         kubectl get svc
