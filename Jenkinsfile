@@ -10,7 +10,7 @@ pipeline {
         SCANNER_HOME = tool 'sonar-scanner'
         TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
         DOCKER_IMAGE = 'saliu21/bloggingapp:latest'  // Centralized Docker image tag
-        KUBECONFIG = '/home/vagrant/jenkins-kube/config'  // Path to kubeconfig
+        KUBECONFIG = '/var/lib/jenkins/.kube/config'  // Corrected path to kubeconfig
     }
 
     stages {
@@ -113,7 +113,7 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withKubeConfig([credentialsId: 'k8-cred']) {
+                    withKubeConfig([kubeconfig: env.KUBECONFIG]) {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
                         kubectl rollout status deployment/<deployment-name> --timeout=60s
@@ -126,7 +126,7 @@ pipeline {
         stage('Verify Kubernetes Deployment') {
             steps {
                 script {
-                    withKubeConfig([credentialsId: 'k8-cred']) {
+                    withKubeConfig([kubeconfig: env.KUBECONFIG]) {
                         sh '''
                         kubectl get pods
                         kubectl get svc
