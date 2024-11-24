@@ -10,7 +10,8 @@ pipeline {
         SCANNER_HOME = tool 'sonar-scanner'
         TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
         DOCKER_IMAGE = 'saliu21/bloggingapp:latest'  // Centralized Docker image tag
-        KUBECONFIG = '/var/lib/jenkins/.kube/config'  // Corrected path to kubeconfig
+        KUBECONFIG = '/home/vagrant/.kube/config'  // Corrected path to kubeconfig
+        DEPLOYMENT_FILE = '/home/vagrant/deployment-service.yml'  // Deployment file path
     }
 
     stages {
@@ -110,13 +111,23 @@ pipeline {
             }
         }
 
+        stage('Debug Environment') {
+            steps {
+                sh '''
+                whoami
+                ls -l $DEPLOYMENT_FILE
+                kubectl --kubeconfig=$KUBECONFIG get nodes
+                '''
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withKubeConfig([kubeconfig: env.KUBECONFIG]) {
+                    withEnv(["KUBECONFIG=$KUBECONFIG"]) {
                         sh '''
-                        kubectl apply -f /home/vagrant/deployment-service.yml
-                        kubectl rollout status deployment/<deployment-name> --timeout=60s
+                        kubectl apply -f $DEPLOYMENT_FILE
+                        kubectl rollout status deployment/blogging-app --timeout=60s
                         '''
                     }
                 }
@@ -126,7 +137,7 @@ pipeline {
         stage('Verify Kubernetes Deployment') {
             steps {
                 script {
-                    withKubeConfig([kubeconfig: env.KUBECONFIG]) {
+                    withEnv(["KUBECONFIG=$KUBECONFIG"]) {
                         sh '''
                         kubectl get pods
                         kubectl get svc
