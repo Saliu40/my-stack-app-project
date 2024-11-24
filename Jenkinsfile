@@ -1,57 +1,122 @@
 pipeline {
     agent any
 
+    tools {
+        jdk 'jdk17'  // Matches the configured JDK in Jenkins Global Tool Configuration
+        maven 'maven3'  // Matches the configured Maven version
+    }
+
     environment {
-        DOCKER_CREDENTIALS = credentials('docker-credentials-id') // Replace with your Docker credentials ID
-        KUBECONFIG_PATH = '/home/vagrant/.kube/config'
+        SCANNER_HOME = tool 'sonar-scanner'
+        TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
+        DOCKER_IMAGE = 'saliu21/bloggingapp:latest'  // Centralized Docker image tag
+        KUBECONFIG = '/home/vagrant/jenkins-kube/config'  // Path to kubeconfig
     }
 
     stages {
-        stage('Checkout Code') {
+
+        stage('Git Checkout') {
             steps {
-                checkout scm
+                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/Saliu40/my-stack-app-project.git'
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Compile') {
             steps {
-                script {
-                    sh '''
-                    docker build -t saliu21/bloggingapp:latest .
-                    '''
-                }
+                sh 'mvn compile'
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Test') {
             steps {
-                script {
-                    withDockerRegistry([url: 'https://index.docker.io/v1/', credentialsId: DOCKER_CREDENTIALS]) {
+                sh 'mvn test'
+                junit '**/target/surefire-reports/*.xml'  // Capture test results for reporting
+            }
+        }
+
+        stage('Static Code Analysis with Trivy FS') {
+            steps {
+                sh '''
+                export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
+                trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table -o fs.html .
+                '''
+                archiveArtifacts artifacts: 'fs.html', allowEmptyArchive: true // Save Trivy FS report
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                         sh '''
-                        docker push saliu21/bloggingapp:latest
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=Blogging-app \
+                        -Dsonar.projectKey=Blogging-app \
+                        -Dsonar.sources=src/main/java \
+                        -Dsonar.java.binaries=target/classes \
+                        -Dsonar.login=$SONAR_TOKEN
                         '''
                     }
                 }
             }
         }
 
-        stage('Debug Environment') {
+        stage('Build') {
+            steps {
+                sh 'mvn clean package'
+                archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true // Save the JAR
+            }
+        }
+
+        stage('Publish Artifacts to Repository') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                    sh 'mvn deploy'
+                }
+            }
+        }
+
+        stage('Docker Build & Tag') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh '''
+                        docker build -t $DOCKER_IMAGE . --no-cache
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Image Scan') {
             steps {
                 sh '''
-                echo "Debugging Environment..."
-                whoami
-                ls -l ${KUBECONFIG_PATH}
+                export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
+                trivy image --exit-code 0 --severity HIGH,CRITICAL --format table -o image.html $DOCKER_IMAGE
                 '''
+                archiveArtifacts artifacts: 'image.html', allowEmptyArchive: true // Save Trivy Image report
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh '''
+                        docker push $DOCKER_IMAGE
+                        '''
+                    }
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withEnv(["KUBECONFIG=${KUBECONFIG_PATH}"]) {
+                    withKubeConfig([credentialsId: 'k8-cred']) {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
-                        kubectl get pods
+                        kubectl rollout status deployment/<deployment-name> --timeout=60s
                         '''
                     }
                 }
@@ -61,10 +126,10 @@ pipeline {
         stage('Verify Kubernetes Deployment') {
             steps {
                 script {
-                    withEnv(["KUBECONFIG=${KUBECONFIG_PATH}"]) {
+                    withKubeConfig([credentialsId: 'k8-cred']) {
                         sh '''
-                        kubectl get deployments
-                        kubectl get services
+                        kubectl get pods
+                        kubectl get svc
                         '''
                     }
                 }
@@ -74,14 +139,16 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning workspace...'
-            cleanWs()
+            echo 'Pipeline completed.'
+            cleanWs() // Clean up the workspace after the pipeline
         }
-        success {
-            echo 'Pipeline completed successfully!'
-        }
+
         failure {
             echo 'Pipeline failed. Check logs for details.'
+        }
+
+        success {
+            echo 'Pipeline completed successfully.'
         }
     }
 }
