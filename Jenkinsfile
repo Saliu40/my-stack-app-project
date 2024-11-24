@@ -1,110 +1,34 @@
 pipeline {
     agent any
 
-    tools {
-        jdk 'jdk17'  // Matches the configured JDK in Jenkins Global Tool Configuration
-        maven 'maven3'  // Matches the configured Maven version
-    }
-
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
-        TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
-        DOCKER_IMAGE = 'saliu21/bloggingapp:latest'  // Centralized Docker image tag
-        KUBECONFIG = '/home/vagrant/.kube/config'  // Corrected path to kubeconfig
-        DEPLOYMENT_FILE = '/home/vagrant/deployment-service.yml'  // Deployment file path
+        DOCKER_CREDENTIALS = credentials('docker-credentials-id') // Replace with your Docker credentials ID
+        KUBECONFIG_PATH = '/home/vagrant/.kube/config'
     }
 
     stages {
-
-        stage('Git Checkout') {
+        stage('Checkout Code') {
             steps {
-                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/Saliu40/my-stack-app-project.git'
+                checkout scm
             }
         }
 
-        stage('Compile') {
-            steps {
-                sh 'mvn compile'
-            }
-        }
-
-        stage('Test') {
-            steps {
-                sh 'mvn test'
-                junit '**/target/surefire-reports/*.xml'  // Capture test results for reporting
-            }
-        }
-
-        stage('Static Code Analysis with Trivy FS') {
-            steps {
-                sh '''
-                export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table -o fs.html .
-                '''
-                archiveArtifacts artifacts: 'fs.html', allowEmptyArchive: true // Save Trivy FS report
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonar-server') {
-                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                        sh '''
-                        $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=Blogging-app \
-                        -Dsonar.projectKey=Blogging-app \
-                        -Dsonar.sources=src/main/java \
-                        -Dsonar.java.binaries=target/classes \
-                        -Dsonar.login=$SONAR_TOKEN
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Build') {
-            steps {
-                sh 'mvn clean package'
-                archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true // Save the JAR
-            }
-        }
-
-        stage('Publish Artifacts to Repository') {
-            steps {
-                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                    sh 'mvn deploy'
-                }
-            }
-        }
-
-        stage('Docker Build & Tag') {
+        stage('Build Docker Image') {
             steps {
                 script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        sh '''
-                        docker build -t $DOCKER_IMAGE . --no-cache
-                        '''
-                    }
+                    sh '''
+                    docker build -t saliu21/bloggingapp:latest .
+                    '''
                 }
-            }
-        }
-
-        stage('Trivy Image Scan') {
-            steps {
-                sh '''
-                export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
-                trivy image --exit-code 0 --severity HIGH,CRITICAL --format table -o image.html $DOCKER_IMAGE
-                '''
-                archiveArtifacts artifacts: 'image.html', allowEmptyArchive: true // Save Trivy Image report
             }
         }
 
         stage('Push Docker Image') {
             steps {
                 script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    withDockerRegistry([url: 'https://index.docker.io/v1/', credentialsId: DOCKER_CREDENTIALS]) {
                         sh '''
-                        docker push $DOCKER_IMAGE
+                        docker push saliu21/bloggingapp:latest
                         '''
                     }
                 }
@@ -114,9 +38,9 @@ pipeline {
         stage('Debug Environment') {
             steps {
                 sh '''
+                echo "Debugging Environment..."
                 whoami
-                ls -l $DEPLOYMENT_FILE
-                kubectl --kubeconfig=$KUBECONFIG get nodes
+                ls -l ${KUBECONFIG_PATH}
                 '''
             }
         }
@@ -124,10 +48,10 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    withEnv(["KUBECONFIG=$KUBECONFIG"]) {
+                    withEnv(["KUBECONFIG=${KUBECONFIG_PATH}"]) {
                         sh '''
-                        kubectl apply -f $DEPLOYMENT_FILE
-                        kubectl rollout status deployment/blogging-app --timeout=60s
+                        kubectl apply -f /home/vagrant/deployment-service.yml
+                        kubectl get pods
                         '''
                     }
                 }
@@ -137,10 +61,10 @@ pipeline {
         stage('Verify Kubernetes Deployment') {
             steps {
                 script {
-                    withEnv(["KUBECONFIG=$KUBECONFIG"]) {
+                    withEnv(["KUBECONFIG=${KUBECONFIG_PATH}"]) {
                         sh '''
-                        kubectl get pods
-                        kubectl get svc
+                        kubectl get deployments
+                        kubectl get services
                         '''
                     }
                 }
@@ -150,16 +74,14 @@ pipeline {
 
     post {
         always {
-            echo 'Pipeline completed.'
-            cleanWs() // Clean up the workspace after the pipeline
+            echo 'Cleaning workspace...'
+            cleanWs()
         }
-
+        success {
+            echo 'Pipeline completed successfully!'
+        }
         failure {
             echo 'Pipeline failed. Check logs for details.'
-        }
-
-        success {
-            echo 'Pipeline completed successfully.'
         }
     }
 }
