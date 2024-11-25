@@ -2,15 +2,15 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'  // Configured JDK in Jenkins
-        maven 'maven3'  // Configured Maven version
+        jdk 'jdk17'  // Matches the configured JDK in Jenkins Global Tool Configuration
+        maven 'maven3'  // Matches the configured Maven version
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
         TRIVY_TIMEOUT = '10m'  // Timeout for Trivy operations
-        DOCKER_IMAGE = 'bloggingapp:latest'  // Docker image tag for Minikube
-        KUBECONFIG = '/home/vagrant/.kube/config'  // Minikube kubeconfig path
+        DOCKER_IMAGE = 'saliu21/bloggingapp:latest'  // Centralized Docker image tag
+        KUBECONFIG = '/home/vagrant/jenkins-kube/config'  // Path to kubeconfig
     }
 
     stages {
@@ -40,7 +40,7 @@ pipeline {
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
                 trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table -o fs.html .
                 '''
-                archiveArtifacts artifacts: 'fs.html', allowEmptyArchive: true  // Save Trivy FS report
+                archiveArtifacts artifacts: 'fs.html', allowEmptyArchive: true // Save Trivy FS report
             }
         }
 
@@ -64,26 +64,26 @@ pipeline {
         stage('Build') {
             steps {
                 sh 'mvn clean package'
-                archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true  // Save the JAR
+                archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true // Save the JAR
             }
         }
 
-        stage('Docker Build for Minikube') {
+        stage('Publish Artifacts to Repository') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'anything', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                    sh 'mvn deploy'
+                }
+            }
+        }
+
+        stage('Docker Build & Tag') {
             steps {
                 script {
-                    // Check if Minikube is running
-                    def minikubeStatus = sh(script: 'minikube status --format "{{.Host}} {{.Kubelet}}"', returnStdout: true).trim()
-                    if (!minikubeStatus.contains("Running Running")) {
-                        error("Minikube is not running. Please start Minikube before running this pipeline.")
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh '''
+                        docker build -t $DOCKER_IMAGE . --no-cache
+                        '''
                     }
-
-                    // Use Minikube's Docker daemon
-                    sh 'eval $(minikube -p minikube docker-env)'
-                    
-                    // Build the Docker image
-                    sh '''
-                    docker build -t $DOCKER_IMAGE .
-                    '''
                 }
             }
         }
@@ -94,26 +94,61 @@ pipeline {
                 export TRIVY_TIMEOUT=$TRIVY_TIMEOUT
                 trivy image --exit-code 0 --severity HIGH,CRITICAL --format table -o image.html $DOCKER_IMAGE
                 '''
-                archiveArtifacts artifacts: 'image.html', allowEmptyArchive: true  // Save Trivy Image report
+                archiveArtifacts artifacts: 'image.html', allowEmptyArchive: true // Save Trivy Image report
             }
         }
 
-        stage('k8-Deploy') {
+        stage('Push Docker Image') {
             steps {
-                sh '''
-                kubectl apply -f deployment-service.yml
-                sleep 20
-                '''
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh '''
+                        docker push $DOCKER_IMAGE
+                        '''
+                    }
+                }
             }
         }
 
-        stage('Verify the Deployment') {
+        stage('Deploy to Kubernetes') {
             steps {
-                sh '''
-                kubectl get pods
-                kubectl get svc
-                '''
+                script {
+                    withKubeConfig([credentialsId: 'k8-cred']) {
+                        sh '''
+                        kubectl apply -f /home/vagrant/deployment-service.yml
+                        kubectl rollout status deployment/<deployment-name> --timeout=60s
+                        '''
+                    }
+                }
             }
+        }
+
+        stage('Verify Kubernetes Deployment') {
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'k8-cred']) {
+                        sh '''
+                        kubectl get pods
+                        kubectl get svc
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline completed.'
+            cleanWs() // Clean up the workspace after the pipeline
+        }
+
+        failure {
+            echo 'Pipeline failed. Check logs for details.'
+        }
+
+        success {
+            echo 'Pipeline completed successfully.'
         }
     }
 }
