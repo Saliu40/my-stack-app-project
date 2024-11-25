@@ -71,8 +71,16 @@ pipeline {
         stage('Docker Build for Minikube') {
             steps {
                 script {
+                    // Check if Minikube is running
+                    def minikubeStatus = sh(script: 'minikube status --format "{{.Host}} {{.Kubelet}}"', returnStdout: true).trim()
+                    if (!minikubeStatus.contains("Running Running")) {
+                        error("Minikube is not running. Please start Minikube before running this pipeline.")
+                    }
+
                     // Use Minikube's Docker daemon
                     sh 'eval $(minikube -p minikube docker-env)'
+                    
+                    // Build the Docker image
                     sh '''
                     docker build -t $DOCKER_IMAGE .
                     '''
@@ -92,23 +100,19 @@ pipeline {
 
         stage('k8-Deploy') {
             steps {
-                script {
-                    sh '''
-                    kubectl apply -f deployment-service.yml
-                    sleep 20
-                    '''
-                }
+                sh '''
+                kubectl apply -f deployment-service.yml
+                sleep 20
+                '''
             }
         }
 
         stage('Verify the Deployment') {
             steps {
-                script {
-                    sh '''
-                    kubectl get pods
-                    kubectl get svc
-                    '''
-                }
+                sh '''
+                kubectl get pods
+                kubectl get svc
+                '''
             }
         }
     }
