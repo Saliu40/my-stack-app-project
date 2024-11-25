@@ -116,7 +116,8 @@ pipeline {
                     withKubeConfig([credentialsId: 'k8-cred']) {
                         sh '''
                         kubectl apply -f /home/vagrant/deployment-service.yml
-                        kubectl rollout status deployment/<deployment-name> --timeout=60s
+                        DEPLOYMENT_NAME=$(kubectl get deployment -n webapps --selector=app=my-app -o jsonpath="{.items[0].metadata.name}")
+                        kubectl rollout status deployment/$DEPLOYMENT_NAME -n webapps --timeout=60s
                         '''
                     }
                 }
@@ -128,8 +129,8 @@ pipeline {
                 script {
                     withKubeConfig([credentialsId: 'k8-cred']) {
                         sh '''
-                        kubectl get pods
-                        kubectl get svc
+                        kubectl get pods -n webapps
+                        kubectl get svc -n webapps
                         '''
                     }
                 }
