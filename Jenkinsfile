@@ -17,7 +17,7 @@ pipeline {
 
         stage('Git Checkout') {
             steps {
-                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/Saliu40/my-stack-app-project.git'
+                git branch: 'main', credentialsId: 'github-cred', url: 'https://github.com/Saliu40/my-stack-app-project.git'
             }
         }
 
